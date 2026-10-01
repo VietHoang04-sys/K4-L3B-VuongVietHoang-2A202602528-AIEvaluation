@@ -250,19 +250,46 @@ class OpenAIGenerator:
             raise RuntimeError("OPENAI_API_KEY is missing from .env")
         if not self.model:
             raise RuntimeError("OPENAI_MODEL is missing from .env")
-        self.client = OpenAI(api_key=api_key)
+
+        base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+        if not base_url and api_key.startswith("AIza"):
+            base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+        self.client = OpenAI(api_key=api_key, base_url=base_url or None)
         self.max_output_tokens = max_output_tokens
 
     def generate(self, prompt: str) -> str:
-        response = self.client.responses.create(
+        try:
+            response = self.client.responses.create(
+                model=self.model,
+                input=prompt,
+                temperature=0,
+                max_output_tokens=self.max_output_tokens,
+            )
+            answer = getattr(response, "output_text", "").strip()
+            if answer:
+                return answer
+        except Exception:
+            pass
+
+        completion = self.client.chat.completions.create(
             model=self.model,
-            input=prompt,
+            messages=[{"role": "user", "content": prompt}],
             temperature=0,
-            max_output_tokens=self.max_output_tokens,
+            max_tokens=self.max_output_tokens,
         )
-        answer = response.output_text.strip()
+        if not completion.choices:
+            raise RuntimeError("No completion choices returned by the model provider")
+        answer = completion.choices[0].message.content
+        if isinstance(answer, list):
+            answer = "".join(
+                part.get("text", "")
+                for part in answer
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            )
+        answer = str(answer or "").strip()
         if not answer:
-            raise RuntimeError("OpenAI returned an empty answer")
+            raise RuntimeError("Model returned an empty answer")
         return answer
 
 
